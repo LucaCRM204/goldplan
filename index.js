@@ -3,11 +3,57 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const cloudinary = require('cloudinary').v2;
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'goldplan-secret-key-2026';
+
+// Cloudinary configuration
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'daxkzdokg',
+    api_key: process.env.CLOUDINARY_API_KEY || '333635244693392',
+    api_secret: process.env.CLOUDINARY_API_SECRET || '4lT-cx9Uy4sA0x9Vo-Eic1dYzGM'
+});
+
+// Función para subir imagen a Cloudinary
+async function uploadToCloudinary(base64Image) {
+    if (!base64Image) return null;
+    
+    // Si ya es una URL de Cloudinary, retornarla
+    if (base64Image.startsWith('http')) return base64Image;
+    
+    // Si no es base64, retornar null
+    if (!base64Image.startsWith('data:image')) return null;
+    
+    try {
+        const result = await cloudinary.uploader.upload(base64Image, {
+            folder: 'goldplan',
+            transformation: [
+                { width: 1200, height: 800, crop: 'limit' },
+                { quality: 'auto:good' },
+                { fetch_format: 'auto' }
+            ]
+        });
+        return result.secure_url;
+    } catch (err) {
+        console.error('Error subiendo a Cloudinary:', err.message);
+        return null;
+    }
+}
+
+// Función para subir múltiples imágenes
+async function uploadMultipleToCloudinary(images) {
+    if (!images || !Array.isArray(images) || images.length === 0) return [];
+    
+    const uploadedUrls = [];
+    for (const img of images) {
+        const url = await uploadToCloudinary(img);
+        if (url) uploadedUrls.push(url);
+    }
+    return uploadedUrls;
+}
 
 // Database connection
 const pool = new Pool({
@@ -336,12 +382,15 @@ app.put('/api/vehicles/0km/:id', authMiddleware, async (req, res) => {
         const { id } = req.params;
         const { price, plan, anticipo, cuota, description, image, images } = req.body;
         
-        // Convertir array de images a JSON string para almacenar
-        const imagesJson = images ? JSON.stringify(images.slice(0, 10)) : null; // Máximo 10 imágenes
+        // Subir imágenes a Cloudinary
+        const uploadedImages = await uploadMultipleToCloudinary(images || []);
+        const mainImage = uploadedImages.length > 0 ? uploadedImages[0] : await uploadToCloudinary(image);
+        
+        const imagesJson = uploadedImages.length > 0 ? JSON.stringify(uploadedImages.slice(0, 10)) : null;
         
         await pool.query(
             `UPDATE vehicles_0km SET price = $1, plan = $2, anticipo = $3, cuota = $4, description = $5, image = $6, images = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8`,
-            [price, plan, anticipo, cuota, description, image, imagesJson, id]
+            [price, plan, anticipo, cuota, description, mainImage, imagesJson, id]
         );
         
         res.json({ success: true });
@@ -371,11 +420,15 @@ app.post('/api/vehicles/usados', authMiddleware, async (req, res) => {
     try {
         const { brand, modelo, year, km, price, description, image, images } = req.body;
         
-        const imagesJson = images ? JSON.stringify(images.slice(0, 10)) : null;
+        // Subir imágenes a Cloudinary
+        const uploadedImages = await uploadMultipleToCloudinary(images || []);
+        const mainImage = uploadedImages.length > 0 ? uploadedImages[0] : await uploadToCloudinary(image);
+        
+        const imagesJson = uploadedImages.length > 0 ? JSON.stringify(uploadedImages.slice(0, 10)) : null;
         
         const result = await pool.query(
             `INSERT INTO vehicles_usados (brand, modelo, year, km, price, description, image, images) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [brand, modelo, year, km, price, description, image, imagesJson]
+            [brand, modelo, year, km, price, description, mainImage, imagesJson]
         );
         
         const vehicle = result.rows[0];
@@ -383,6 +436,7 @@ app.post('/api/vehicles/usados', authMiddleware, async (req, res) => {
         
         res.json(vehicle);
     } catch (err) {
+        console.error('Error creating usado:', err);
         res.status(500).json({ error: 'Error al crear vehículo usado' });
     }
 });
@@ -392,15 +446,20 @@ app.put('/api/vehicles/usados/:id', authMiddleware, async (req, res) => {
         const { id } = req.params;
         const { brand, modelo, year, km, price, description, image, images } = req.body;
         
-        const imagesJson = images ? JSON.stringify(images.slice(0, 10)) : null;
+        // Subir imágenes a Cloudinary
+        const uploadedImages = await uploadMultipleToCloudinary(images || []);
+        const mainImage = uploadedImages.length > 0 ? uploadedImages[0] : await uploadToCloudinary(image);
+        
+        const imagesJson = uploadedImages.length > 0 ? JSON.stringify(uploadedImages.slice(0, 10)) : null;
         
         await pool.query(
             `UPDATE vehicles_usados SET brand = $1, modelo = $2, year = $3, km = $4, price = $5, description = $6, image = $7, images = $8, updated_at = CURRENT_TIMESTAMP WHERE id = $9`,
-            [brand, modelo, year, km, price, description, image, imagesJson, id]
+            [brand, modelo, year, km, price, description, mainImage, imagesJson, id]
         );
         
         res.json({ success: true });
     } catch (err) {
+        console.error('Error updating usado:', err);
         res.status(500).json({ error: 'Error al actualizar vehículo usado' });
     }
 });
@@ -412,6 +471,91 @@ app.delete('/api/vehicles/usados/:id', authMiddleware, async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Error al eliminar vehículo usado' });
+    }
+});
+
+// ==================== MIGRATE IMAGES TO CLOUDINARY ====================
+
+app.post('/api/migrate-images', authMiddleware, async (req, res) => {
+    try {
+        let migrated = 0;
+        
+        // Migrar 0km
+        const vehicles0km = await pool.query('SELECT id, image, images FROM vehicles_0km');
+        for (const v of vehicles0km.rows) {
+            let needsUpdate = false;
+            let newImage = v.image;
+            let newImages = v.images ? JSON.parse(v.images) : [];
+            
+            // Migrar imagen principal si es base64
+            if (v.image && v.image.startsWith('data:image')) {
+                newImage = await uploadToCloudinary(v.image);
+                needsUpdate = true;
+            }
+            
+            // Migrar array de imágenes
+            if (newImages.length > 0) {
+                const migratedImages = [];
+                for (const img of newImages) {
+                    if (img.startsWith('data:image')) {
+                        const url = await uploadToCloudinary(img);
+                        if (url) migratedImages.push(url);
+                        needsUpdate = true;
+                    } else {
+                        migratedImages.push(img);
+                    }
+                }
+                newImages = migratedImages;
+            }
+            
+            if (needsUpdate) {
+                await pool.query(
+                    'UPDATE vehicles_0km SET image = $1, images = $2 WHERE id = $3',
+                    [newImage, JSON.stringify(newImages), v.id]
+                );
+                migrated++;
+            }
+        }
+        
+        // Migrar usados
+        const usados = await pool.query('SELECT id, image, images FROM vehicles_usados');
+        for (const v of usados.rows) {
+            let needsUpdate = false;
+            let newImage = v.image;
+            let newImages = v.images ? JSON.parse(v.images) : [];
+            
+            if (v.image && v.image.startsWith('data:image')) {
+                newImage = await uploadToCloudinary(v.image);
+                needsUpdate = true;
+            }
+            
+            if (newImages.length > 0) {
+                const migratedImages = [];
+                for (const img of newImages) {
+                    if (img.startsWith('data:image')) {
+                        const url = await uploadToCloudinary(img);
+                        if (url) migratedImages.push(url);
+                        needsUpdate = true;
+                    } else {
+                        migratedImages.push(img);
+                    }
+                }
+                newImages = migratedImages;
+            }
+            
+            if (needsUpdate) {
+                await pool.query(
+                    'UPDATE vehicles_usados SET image = $1, images = $2 WHERE id = $3',
+                    [newImage, JSON.stringify(newImages), v.id]
+                );
+                migrated++;
+            }
+        }
+        
+        res.json({ success: true, migrated });
+    } catch (err) {
+        console.error('Error migrando imágenes:', err);
+        res.status(500).json({ error: 'Error al migrar imágenes' });
     }
 });
 

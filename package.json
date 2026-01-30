@@ -12,6 +12,7 @@
     "cors": "*",
     "bcrypt": "*",
     "jsonwebtoken": "*",
-    "dotenv": "*"
+    "dotenv": "*",
+    "cloudinary": "*"
   }
 }
