@@ -17,7 +17,29 @@ const pool = new Pool({
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Aumentado para múltiples imágenes
+
+// JSON parser con mejor manejo de errores
+app.use(express.json({ 
+    limit: '50mb',
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
+
+// Manejar errores de parsing JSON
+app.use((err, req, res, next) => {
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'Archivo demasiado grande. Máximo 50MB.' });
+    }
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        return res.status(400).json({ error: 'JSON inválido' });
+    }
+    if (err.type === 'request.aborted') {
+        console.log('Request abortada por el cliente');
+        return; // No enviar respuesta, el cliente ya se desconectó
+    }
+    next(err);
+});
 
 // Auth middleware
 const authMiddleware = (req, res, next) => {
@@ -432,9 +454,30 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Global error handler
+app.use((err, req, res, next) => {
+    console.error('Error no manejado:', err.message);
+    if (!res.headersSent) {
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err.message);
+});
+
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled Rejection:', err.message);
+});
+
 // Start server
 initDB().then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
+    
+    // Timeout para requests largas (2 minutos)
+    server.timeout = 120000;
+    server.keepAliveTimeout = 65000;
 });
