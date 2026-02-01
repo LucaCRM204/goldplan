@@ -400,6 +400,17 @@ app.put('/api/vehicles/0km/:id', authMiddleware, async (req, res) => {
     }
 });
 
+app.delete('/api/vehicles/0km/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.query('DELETE FROM vehicles_0km WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting vehicle:', err);
+        res.status(500).json({ error: 'Error al eliminar vehículo' });
+    }
+});
+
 // ==================== VEHICLES USADOS ROUTES ====================
 
 app.get('/api/vehicles/usados', async (req, res) => {
