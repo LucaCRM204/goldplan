@@ -377,6 +377,26 @@ app.get('/api/vehicles/0km', async (req, res) => {
     }
 });
 
+app.post('/api/vehicles/0km', authMiddleware, async (req, res) => {
+    try {
+        const { brand, name, price, plan, anticipo, cuota, description, image, images } = req.body;
+        if (!brand || !name) return res.status(400).json({ error: 'Marca y modelo son requeridos' });
+        
+        const mainImage = images && images.length > 0 ? images[0] : (image || '');
+        const imagesJson = images && images.length > 0 ? JSON.stringify(images.slice(0, 10)) : null;
+        
+        const result = await pool.query(
+            `INSERT INTO vehicles_0km (brand, name, price, plan, anticipo, cuota, description, image, images) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+            [brand, name, price, plan, anticipo, cuota, description, mainImage, imagesJson]
+        );
+        
+        res.json({ success: true, id: result.rows[0].id });
+    } catch (err) {
+        console.error('Error creating 0km vehicle:', err);
+        res.status(500).json({ error: 'Error al crear vehículo' });
+    }
+});
+
 app.put('/api/vehicles/0km/:id', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
