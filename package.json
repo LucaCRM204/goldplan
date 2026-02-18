@@ -7,12 +7,13 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "*",
-    "pg": "*",
-    "cors": "*",
     "bcrypt": "*",
-    "jsonwebtoken": "*",
+    "cloudinary": "*",
+    "cors": "*",
     "dotenv": "*",
-    "cloudinary": "*"
+    "express": "*",
+    "jsonwebtoken": "*",
+    "mercadopago": "^2.12.0",
+    "pg": "*"
   }
 }
